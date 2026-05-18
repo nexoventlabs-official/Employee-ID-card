@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Plus, Sparkles, Trash2, FileSpreadsheet, Inbox } from 'lucide-react';
-import { toPng } from 'html-to-image';
+import { toBlob } from 'html-to-image';
+import JSZip from 'jszip';
 import api from '../lib/api.js';
 import IDCard from '../components/IDCard.jsx';
 import UploadDialog from '../components/UploadDialog.jsx';
@@ -51,6 +52,24 @@ function nextFrame() {
   return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 }
 
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // free memory after the click handler has actually started the download
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function timestamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
 export default function IDGenerator() {
   const [employees, setEmployees] = useState([]);
   const [fileName, setFileName] = useState('');
@@ -83,12 +102,25 @@ export default function IDGenerator() {
     setGenerating(true);
     setProgress({ done: 0, total: employees.length });
 
+    const zip = new JSZip();
+    const folder = zip.folder('id_cards');
+    let succeeded = 0;
+
     try {
       // 1. Preload every photo & wait for webfonts so first export is crisp
       await Promise.all([
         preloadImages(employees),
         document.fonts?.ready ?? Promise.resolve(),
       ]);
+
+      // High-DPI export. pixelRatio: 4 → ~960 px wide per card
+      // (≈450 DPI on a 2.125" CR80 card).
+      const opts = {
+        cacheBust: true,
+        pixelRatio: 4,
+        backgroundColor: '#2a2a2a',
+        skipFonts: false,
+      };
 
       for (let i = 0; i < employees.length; i++) {
         const emp = employees[i];
@@ -102,37 +134,46 @@ export default function IDGenerator() {
         const node = exportRef.current;
         if (!node) continue;
 
-        // 3. High-DPI export. pixelRatio: 4 → ~960px wide per card
-        //    (≈450 DPI on a 2.125" CR80 card). Run twice & keep the 2nd
-        //    snapshot — the first warms up the renderer so images never
-        //    appear half-painted (kills the flicker).
-        const opts = {
-          cacheBust: true,
-          pixelRatio: 4,
-          backgroundColor: '#2a2a2a',
-          skipFonts: false,
-        };
-        await toPng(node, opts).catch(() => null); // warm-up
-        const dataUrl = await toPng(node, opts).catch((err) => {
+        // 3. Two-pass snapshot — first warms up html-to-image's internal
+        //    cache so images are never half-painted (kills flicker), second
+        //    is the one we keep.
+        await toBlob(node, opts).catch(() => null);
+        const blob = await toBlob(node, opts).catch((err) => {
           console.error('export failed for', emp.fullName, err);
           return null;
         });
 
-        if (dataUrl) {
-          const link = document.createElement('a');
-          link.download = `${safeFileName(emp.employeeId || emp.fullName)}_id_card.png`;
-          link.href = dataUrl;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
+        if (blob) {
+          const filename = `${safeFileName(emp.employeeId || emp.fullName)}_id_card.png`;
+          if (employees.length === 1) {
+            // Single card → download as plain PNG (no zip needed)
+            triggerDownload(blob, filename);
+          } else {
+            folder.file(filename, blob);
+          }
+          succeeded++;
         }
         setProgress({ done: i + 1, total: employees.length });
-        // small delay so the browser doesn't choke on rapid downloads
-        await sleep(150);
+        await sleep(80); // breathing room between heavy snapshots
+      }
+
+      // 4. Bundle & download (only when more than one card was generated)
+      if (employees.length > 1 && succeeded > 0) {
+        const zipBlob = await zip.generateAsync(
+          { type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } },
+          (meta) => {
+            // re-use progress display for zipping phase
+            setProgress({
+              done: employees.length + Math.round((meta.percent || 0) / 100),
+              total: employees.length + 1,
+            });
+          }
+        );
+        triggerDownload(zipBlob, `id_cards_${timestamp()}.zip`);
       }
 
       // bump dashboard counter
-      api.post('/api/stats/increment', { generated: employees.length }).catch(() => {});
+      api.post('/api/stats/increment', { generated: succeeded }).catch(() => {});
     } finally {
       setExportEmployee(null);
       setGenerating(false);
@@ -217,7 +258,9 @@ export default function IDGenerator() {
               {generating && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--accent)', fontSize: 13 }}>
                   <div className="spinner" style={{ borderColor: 'rgba(232,168,32,0.3)', borderTopColor: 'var(--accent)' }} />
-                  Generating {progress.done} / {progress.total}…
+                  {progress.done >= employees.length && employees.length > 1
+                    ? 'Bundling into ZIP…'
+                    : `Rendering ${Math.min(progress.done, employees.length)} / ${employees.length}…`}
                 </div>
               )}
             </div>
