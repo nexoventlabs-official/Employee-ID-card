@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: employee-id-card-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: CORS_ORIGIN
+        value: "*"   # change to your Vercel URL once frontend is deployed
+      - key: UPLOAD_DIR
+        value: ./uploads
+      - key: MAX_UPLOAD_MB
+        value: "10"
+    healthCheckPath: /api/health
