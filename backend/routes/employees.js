@@ -71,11 +71,11 @@ function normaliseRow(row) {
 // Holds employee data + theme so QR scans can re-render the exact card.
 const cardsStore = new Map();
 
-module.exports = (stats) => {
+function buildCardsRouter() {
   const router = express.Router();
 
   // Register / refresh a batch of cards (called on upload and on theme change).
-  router.post('/cards/batch', (req, res) => {
+  router.post('/batch', (req, res) => {
     const { employees = [], theme = null } = req.body || {};
     const ids = [];
     for (const emp of employees) {
@@ -88,11 +88,17 @@ module.exports = (stats) => {
   });
 
   // Fetch a single card by employeeId (used by the public /v page).
-  router.get('/cards/:id', (req, res) => {
+  router.get('/:id', (req, res) => {
     const card = cardsStore.get(req.params.id);
     if (!card) return res.status(404).json({ error: 'Card not found' });
     res.json(card);
   });
+
+  return router;
+}
+
+module.exports = (stats) => {
+  const router = express.Router();
 
   router.post('/upload', upload.single('file'), (req, res, next) => {
     try {
@@ -146,3 +152,7 @@ module.exports = (stats) => {
 
   return router;
 };
+
+// Expose the cards router as a separate export so server.js can mount it
+// at /api/cards (matches the front-end's expected paths).
+module.exports.buildCardsRouter = buildCardsRouter;

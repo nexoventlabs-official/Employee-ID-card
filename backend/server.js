@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const employeesRouter = require('./routes/employees');
+const { buildCardsRouter } = require('./routes/employees');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,6 +50,7 @@ app.post('/api/stats/increment', (req, res) => {
   res.json(stats);
 });
 
+app.use('/api/cards', buildCardsRouter());
 app.use('/api/employees', employeesRouter(stats));
 
 app.use((err, _req, res, _next) => {
