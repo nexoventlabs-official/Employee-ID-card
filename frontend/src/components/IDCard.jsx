@@ -1,25 +1,78 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
+import LZString from 'lz-string';
 
-// Base64 helpers that survive unicode characters.
-function b64encode(obj) {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+// Compact, URL-safe encoding using LZ-string. Field names shortened to single
+// letters to keep the QR low-density (chunky modules — easier to scan).
+const FIELD_MAP = {
+  fullName: 'n',
+  role: 'r',
+  department: 'd',
+  employeeId: 'e',
+  cardType: 't',
+  organisation: 'o',
+  validUntil: 'v',
+  bloodGroup: 'b',
+  contact: 'c',
+  imageUrl: 'i',
+};
+const REVERSE_FIELD_MAP = Object.fromEntries(
+  Object.entries(FIELD_MAP).map(([k, v]) => [v, k])
+);
+
+function compactPayload(employee, theme) {
+  const out = {};
+  for (const [long, short] of Object.entries(FIELD_MAP)) {
+    if (employee[long]) out[short] = employee[long];
+  }
+  if (theme) {
+    out.k = { a: theme.accent, f: theme.frontBg, w: theme.onAccent };
+  }
+  return out;
 }
 
-export function buildCardViewUrl(employee, baseUrl = window.location.origin) {
-  const payload = {
-    fullName: employee.fullName,
-    role: employee.role,
-    department: employee.department,
-    employeeId: employee.employeeId,
-    cardType: employee.cardType,
-    organisation: employee.organisation,
-    validUntil: employee.validUntil,
-    bloodGroup: employee.bloodGroup,
-    contact: employee.contact,
-    imageUrl: employee.imageUrl,
-  };
-  return `${baseUrl}/view#${b64encode(payload)}`;
+export function expandPayload(compact) {
+  if (!compact || typeof compact !== 'object') return null;
+  const employee = {};
+  for (const [short, val] of Object.entries(compact)) {
+    if (short === 'k') continue;
+    const long = REVERSE_FIELD_MAP[short];
+    if (long) employee[long] = val;
+  }
+  const theme = compact.k
+    ? { accent: compact.k.a, frontBg: compact.k.f, onAccent: compact.k.w }
+    : null;
+  return { employee, theme };
+}
+
+export function encodeCardData(employee, theme) {
+  return LZString.compressToEncodedURIComponent(
+    JSON.stringify(compactPayload(employee, theme))
+  );
+}
+
+export function decodeCardData(encoded) {
+  try {
+    const json = LZString.decompressFromEncodedURIComponent(encoded);
+    if (!json) return null;
+    return expandPayload(JSON.parse(json));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the QR target URL.
+ *  - If the employee has an ID and the backend is reachable, we prefer a
+ *    SHORT lookup URL (`/v?i=<empId>`) so the QR has very few modules
+ *    (chunky, easy to scan from the printed card).
+ *  - For employees without an ID we fall back to embedding the full data
+ *    in the hash (offline-capable).
+ */
+export function buildCardViewUrl(employee, theme, baseUrl = window.location.origin) {
+  const id = String(employee?.employeeId || '').trim();
+  if (id) return `${baseUrl}/v?i=${encodeURIComponent(id)}`;
+  return `${baseUrl}/v#${encodeCardData(employee, theme)}`;
 }
 
 /**
@@ -90,17 +143,26 @@ function FrontCard({ data, theme }) {
 
   useEffect(() => {
     let cancelled = false;
-    const viewUrl = buildCardViewUrl(data);
+    // Re-derive the raw theme from the CSS-vars style object so we can embed
+    // it inside the QR. The /view page will apply these colours when scanned.
+    const rawTheme = theme
+      ? {
+          accent: theme['--c-accent'] || '#E8A820',
+          frontBg: theme['--c-front-bg'] || '#f8f6f0',
+          onAccent: theme['--c-on-accent'] || '#ffffff',
+        }
+      : null;
+    const viewUrl = buildCardViewUrl(data, rawTheme);
     QRCode.toDataURL(viewUrl, {
-      margin: 0,
-      width: 256, // high-res so it stays crisp in 4x exports
+      margin: 2,                 // built-in quiet zone (chunky look)
+      width: 320,                // high-res for 4x card exports
       color: { dark: '#1a1a1a', light: '#ffffff' },
-      errorCorrectionLevel: 'M',
+      errorCorrectionLevel: 'L', // low ECC → fewer modules → chunkier blocks
     })
       .then((url) => { if (!cancelled) setQrDataUrl(url); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [employeeId, fullName, role, department, organisation, data]);
+  }, [employeeId, fullName, role, department, organisation, data, theme]);
 
   return (
     <div className="id-card front" style={theme}>

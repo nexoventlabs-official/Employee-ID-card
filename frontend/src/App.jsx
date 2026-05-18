@@ -7,11 +7,12 @@ import ViewCard from './pages/ViewCard.jsx';
 
 export default function App() {
   const { pathname } = useLocation();
-  const isPublic = pathname.startsWith('/view');
+  const isPublic = pathname.startsWith('/view') || pathname.startsWith('/v');
 
   if (isPublic) {
     return (
       <Routes>
+        <Route path="/v" element={<ViewCard />} />
         <Route path="/view" element={<ViewCard />} />
       </Routes>
     );

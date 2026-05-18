@@ -65,11 +65,15 @@ export default function IDGenerator() {
   const handleParsed = (rows, name) => {
     setEmployees(rows);
     setFileName(name || '');
+    // Pre-register cards with default theme so preview QRs immediately resolve.
+    api.post('/api/cards/batch', { employees: rows, theme: PRESETS[0] }).catch(() => {});
   };
 
   const handleConfirmTheme = async (chosenTheme) => {
     setTheme(chosenTheme);
     setThemeOpen(false);
+    // Re-register with the chosen theme so QR scans show the correct colours.
+    await api.post('/api/cards/batch', { employees, theme: chosenTheme }).catch(() => {});
     await sleep(50);
     await generateAll(chosenTheme);
   };

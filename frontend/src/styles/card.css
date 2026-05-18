@@ -252,7 +252,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  padding: 0;
+  overflow: hidden;
 }
 
 .id-qr-box canvas,
@@ -260,6 +261,7 @@
   width: 100%;
   height: 100%;
   display: block;
+  object-fit: contain;
 }
 
 .id-id-barcode { text-align: right; }

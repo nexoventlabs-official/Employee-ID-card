@@ -67,8 +67,32 @@ function normaliseRow(row) {
   return out;
 }
 
+// In-memory card lookup store (keyed by employeeId).
+// Holds employee data + theme so QR scans can re-render the exact card.
+const cardsStore = new Map();
+
 module.exports = (stats) => {
   const router = express.Router();
+
+  // Register / refresh a batch of cards (called on upload and on theme change).
+  router.post('/cards/batch', (req, res) => {
+    const { employees = [], theme = null } = req.body || {};
+    const ids = [];
+    for (const emp of employees) {
+      const id = String(emp.employeeId || '').trim();
+      if (!id) continue;
+      cardsStore.set(id, { employee: emp, theme, createdAt: Date.now() });
+      ids.push(id);
+    }
+    res.json({ count: ids.length, ids });
+  });
+
+  // Fetch a single card by employeeId (used by the public /v page).
+  router.get('/cards/:id', (req, res) => {
+    const card = cardsStore.get(req.params.id);
+    if (!card) return res.status(404).json({ error: 'Card not found' });
+    res.json(card);
+  });
 
   router.post('/upload', upload.single('file'), (req, res, next) => {
     try {
